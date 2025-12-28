@@ -234,6 +234,86 @@ export async function deleteRowAction(sectionId: string, tableId: string, rowId:
   revalidatePath(`/sections/${sectionId}/tables/${tableId}`);
 }
 
+export async function deleteSectionAction(sectionId: string) {
+  await requireRole('admin');
+  const supabase = await createClient();
+  const adminClient = createAdminClient();
+
+  const { data: section, error: sectionError } = await supabase
+    .from('sections')
+    .select('id, parent_id')
+    .eq('id', sectionId)
+    .single();
+
+  if (sectionError || !section) {
+    throw new Error('Раздел не найден');
+  }
+
+  const { data: tables, error: tablesError } = await supabase
+    .from('section_tables')
+    .select('id')
+    .eq('section_id', sectionId);
+
+  if (tablesError) {
+    throw new Error(tablesError.message);
+  }
+
+  const tableIds = tables?.map((table) => table.id) ?? [];
+
+  if (tableIds.length > 0) {
+    const { error: rowsDeleteError } = await supabase
+      .from('section_table_rows')
+      .delete()
+      .in('table_id', tableIds);
+
+    if (rowsDeleteError) {
+      throw new Error(rowsDeleteError.message);
+    }
+
+    const { error: deleteTablesError } = await supabase
+      .from('section_tables')
+      .delete()
+      .in('id', tableIds);
+
+    if (deleteTablesError) {
+      throw new Error(deleteTablesError.message);
+    }
+  }
+
+  const { data: fileRecords, error: filesError } = await supabase
+    .from('section_files')
+    .select('path')
+    .eq('section_id', sectionId);
+
+  if (filesError) {
+    throw new Error(filesError.message);
+  }
+
+  if (fileRecords && fileRecords.length > 0) {
+    const { error: deleteFilesError } = await supabase
+      .from('section_files')
+      .delete()
+      .eq('section_id', sectionId);
+
+    if (deleteFilesError) {
+      throw new Error(deleteFilesError.message);
+    }
+
+    const paths = fileRecords.map((file) => file.path).filter(Boolean);
+    if (paths.length > 0) {
+      await adminClient.storage.from('files').remove(paths);
+    }
+  }
+
+  const { error: deleteSectionError } = await supabase.from('sections').delete().eq('id', sectionId);
+
+  if (deleteSectionError) {
+    throw new Error(deleteSectionError.message);
+  }
+
+  await revalidateSections(section.parent_id);
+}
+
 export async function deleteTableAction(sectionId: string, tableId: string) {
   await requireRole('admin');
   const supabase = await createClient();

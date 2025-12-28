@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, getUserWithRole } from '@/lib/auth/requireRole';
 import { buildSectionsTree, type SectionNode, type SectionRecord } from '@/lib/sections/tree';
+import { createTeacherAction, resetTeacherPasswordAction } from '@/app/admin/actions';
 import { createSectionAction } from './sections/actions';
 
 function renderTree(nodes: SectionNode[], depth = 0): JSX.Element[] {
@@ -25,8 +26,20 @@ function renderTree(nodes: SectionNode[], depth = 0): JSX.Element[] {
   ));
 }
 
-export default async function DashboardPage() {
+type DashboardPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps = {}) {
   try {
+    const resolvedSearchParams = searchParams ? await searchParams : undefined;
+    const userActionOk =
+      typeof resolvedSearchParams?.userOk === 'string' ? resolvedSearchParams.userOk : null;
+    const userActionError =
+      typeof resolvedSearchParams?.userError === 'string'
+        ? resolvedSearchParams.userError
+        : null;
+
     const context = await getUserWithRole();
     const supabase = await createClient();
     const { data, error } = await supabase
@@ -161,6 +174,120 @@ export default async function DashboardPage() {
                     }`}
                   >
                     + Создать подраздел
+                  </button>
+                </form>
+              </div>
+
+              {userActionOk ? (
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                  {userActionOk}
+                </p>
+              ) : null}
+              {userActionError ? (
+                <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+                  {userActionError}
+                </p>
+              ) : null}
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                <h2 className="text-lg font-semibold text-slate-900">Создать пользователя</h2>
+                <p className="text-sm text-slate-600">
+                  Завуч указывает почту и, при необходимости, ФИО. Можно отправить приглашение или выдать временный пароль.
+                </p>
+                <form action={createTeacherAction} className="mt-4 space-y-3">
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Email</span>
+                    <input
+                      type="email"
+                      name="email"
+                      required
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-black"
+                      placeholder="teacher@example.com"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">ФИО (опционально)</span>
+                    <input
+                      type="text"
+                      name="fullName"
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-black"
+                      placeholder="Иванова Анна"
+                    />
+                  </label>
+                  <fieldset className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm text-slate-600">
+                    <legend className="text-xs uppercase tracking-wide text-slate-400">Способ доступа</legend>
+                    <label className="mt-2 flex cursor-pointer items-start gap-2">
+                      <input type="radio" name="mode" value="invite" defaultChecked />
+                      <div>
+                        <p className="font-medium text-slate-900">Письмо-приглашение</p>
+                        <p className="text-xs text-slate-500">
+                          Supabase отправит учителю письмо. Он задаст пароль по ссылке.
+                        </p>
+                      </div>
+                    </label>
+                    <label className="mt-3 flex cursor-pointer items-start gap-2">
+                      <input type="radio" name="mode" value="password" />
+                      <div>
+                        <p className="font-medium text-slate-900">Временный пароль</p>
+                        <p className="text-xs text-slate-500">
+                          Пароль задаётся вручную. Учителю нужно будет сменить его при первом входе.
+                        </p>
+                      </div>
+                    </label>
+                  </fieldset>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Временный пароль</span>
+                    <input
+                      type="text"
+                      name="password"
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-black"
+                      placeholder="Минимум 6 символов"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Поле используется только при выборе режима «Временный пароль».
+                    </span>
+                  </label>
+                  <button
+                    type="submit"
+                    className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white"
+                  >
+                    Создать пользователя
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                <h2 className="text-lg font-semibold text-slate-900">Сбросить пароль учителя</h2>
+                <p className="text-sm text-slate-600">
+                  Введите почту и новый временный пароль. После сохранения передайте его учителю.
+                </p>
+                <form action={resetTeacherPasswordAction} className="mt-4 space-y-3">
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Email</span>
+                    <input
+                      type="email"
+                      name="email"
+                      required
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-black"
+                      placeholder="teacher@example.com"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Новый пароль</span>
+                    <input
+                      type="text"
+                      name="newPassword"
+                      minLength={6}
+                      required
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-black"
+                      placeholder="Минимум 6 символов"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-900"
+                  >
+                    Обновить пароль
                   </button>
                 </form>
               </div>

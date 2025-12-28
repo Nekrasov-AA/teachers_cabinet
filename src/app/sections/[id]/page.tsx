@@ -4,12 +4,14 @@ import SectionSidebar from '@/components/sections/SectionSidebar';
 import UploadSectionFileForm from '@/components/sections/UploadSectionFileForm';
 import ExcelImportPreview from '@/components/sections/ExcelImportPreview';
 import ExcelImportForm from '@/components/sections/ExcelImportForm';
+import DeleteSectionButton from '@/components/sections/DeleteSectionButton';
 import { createClient } from '@/lib/supabase/server';
 import { getUserWithRole } from '@/lib/auth/requireRole';
 import {
   uploadSectionFileAction,
   deleteSectionFileAction,
   createTableAction,
+  deleteSectionAction,
 } from '@/app/sections/actions';
 
 function formatBytes(size?: number | null) {
@@ -48,7 +50,6 @@ export default async function SectionPage({ params, searchParams }: PageProps) {
     .select('id, path, original_name, mime_type, size, created_at')
     .eq('section_id', id)
     .order('created_at', { ascending: false });
-
   if (filesError) {
     throw new Error(filesError.message);
   }
@@ -94,8 +95,6 @@ export default async function SectionPage({ params, searchParams }: PageProps) {
 
     redirect(`/sections/${id}?${query.toString()}`);
   };
-  const storageUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
   const handleCreateTable = async (formData: FormData) => {
     'use server';
 
@@ -116,6 +115,23 @@ export default async function SectionPage({ params, searchParams }: PageProps) {
     }
 
     redirect(`/sections/${id}?${query.toString()}`);
+  };
+
+  const handleDeleteSection = async () => {
+    'use server';
+
+    try {
+      await deleteSectionAction(id);
+    } catch (error) {
+      const failureQuery = new URLSearchParams();
+      const message = error instanceof Error ? error.message : 'Не удалось удалить раздел';
+      failureQuery.set('error', message);
+      redirect(`/sections/${id}?${failureQuery.toString()}`);
+    }
+
+    const successQuery = new URLSearchParams();
+    successQuery.set('ok', 'Раздел удалён');
+    redirect(`/?${successQuery.toString()}`);
   };
 
   return (
@@ -174,31 +190,34 @@ export default async function SectionPage({ params, searchParams }: PageProps) {
               </p>
             ) : null}
             {errorMessage ? (
-              <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
                 {errorMessage}
               </p>
             ) : null}
-
             {tables && tables.length > 0 ? (
-              <ul className="mt-4 divide-y divide-slate-100">
+              <ul className="mt-6 divide-y divide-slate-100">
                 {tables.map((table) => (
-                  <li key={table.id} className="py-3">
+                  <li
+                    key={table.id}
+                    className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div>
+                      <p className="text-base font-medium text-slate-900">{table.title}</p>
+                      <p className="text-xs text-slate-500">
+                        Создана {new Date(table.created_at ?? '').toLocaleString('ru-RU')}
+                      </p>
+                    </div>
                     <Link
                       href={`/sections/${id}/tables/${table.id}`}
-                      className="flex flex-col rounded-xl border border-transparent px-2 py-2 transition hover:border-indigo-100 hover:bg-indigo-50/40"
+                      className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:border-slate-300"
                     >
-                      <span className="font-medium text-slate-900">{table.title}</span>
-                      <span className="text-xs text-slate-500">
-                        {table.created_at ? new Date(table.created_at).toLocaleString('ru-RU') : '—'}
-                      </span>
+                      Открыть
                     </Link>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="mt-4 text-sm text-slate-500">
-                В этом разделе пока нет таблиц.
-              </p>
+              <p className="mt-6 text-sm text-slate-500">В этом разделе ещё нет таблиц.</p>
             )}
           </section>
 
@@ -241,43 +260,51 @@ export default async function SectionPage({ params, searchParams }: PageProps) {
             </div>
             {files && files.length > 0 ? (
               <ul className="mt-4 divide-y divide-slate-100">
-                {files.map((file) => {
-                  const url = storageUrl
-                    ? `${storageUrl}/storage/v1/object/public/files/${file.path}`
-                    : null;
-                  return (
-                    <li key={file.id} className="flex flex-col gap-2 py-4 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <p className="font-medium text-slate-900">{file.original_name}</p>
-                        <p className="text-xs text-slate-500">
-                          {file.mime_type || 'unknown'} · {formatBytes(file.size)} ·{' '}
-                          {new Date(file.created_at ?? '').toLocaleString('ru-RU')}
-                        </p>
-                        {url ? (
-                          <a href={url} target="_blank" rel="noreferrer" className="text-xs font-medium text-indigo-600">
-                            Скачать
-                          </a>
-                        ) : null}
-                      </div>
-                      {context.role === 'admin' ? (
-                        <form action={deleteAction} className="self-start md:self-auto">
-                          <input type="hidden" name="fileId" value={file.id} />
-                          <button
-                            type="submit"
-                            className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600"
-                          >
-                            Удалить
-                          </button>
-                        </form>
-                      ) : null}
-                    </li>
-                  );
-                })}
+                {files.map((file) => (
+                  <li key={file.id} className="flex flex-col gap-2 py-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-medium text-slate-900">{file.original_name}</p>
+                      <p className="text-xs text-slate-500">
+                        {file.mime_type || 'unknown'} · {formatBytes(file.size)} ·{' '}
+                        {new Date(file.created_at ?? '').toLocaleString('ru-RU')}
+                      </p>
+                      <a
+                        href={`/api/files/${file.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-medium text-indigo-600"
+                      >
+                        Скачать
+                      </a>
+                    </div>
+                    {context.role === 'admin' ? (
+                      <form action={deleteAction} className="self-start md:self-auto">
+                        <input type="hidden" name="fileId" value={file.id} />
+                        <button
+                          type="submit"
+                          className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600"
+                        >
+                          Удалить
+                        </button>
+                      </form>
+                    ) : null}
+                  </li>
+                ))}
               </ul>
             ) : (
               <p className="mt-4 text-sm text-slate-500">В этом разделе ещё нет файлов.</p>
             )}
           </section>
+
+          {context.role === 'admin' ? (
+            <section className="rounded-2xl border border-rose-200 bg-white p-6">
+              <h2 className="text-lg font-semibold text-rose-900">Опасная зона</h2>
+              <p className="text-sm text-slate-500">
+                Удаление раздела приведёт к удалению всех таблиц и файлов. Действие необратимо.
+              </p>
+              <DeleteSectionButton action={handleDeleteSection} />
+            </section>
+          ) : null}
         </div>
       </main>
     </div>
