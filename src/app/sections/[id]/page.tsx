@@ -63,8 +63,37 @@ export default async function SectionPage({ params, searchParams }: PageProps) {
     throw new Error(tablesError.message);
   }
 
-  const uploadAction = uploadSectionFileAction.bind(null, id);
-  const deleteAction = deleteSectionFileAction.bind(null, id);
+  const uploadAction = async (formData: FormData) => {
+    'use server';
+
+    const query = new URLSearchParams();
+
+    try {
+      await uploadSectionFileAction(id, formData);
+      query.set('ok', 'Файл загружен');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить файл';
+      query.set('error', message);
+    }
+
+    redirect(`/sections/${id}?${query.toString()}`);
+  };
+
+  const deleteAction = async (formData: FormData) => {
+    'use server';
+
+    const query = new URLSearchParams();
+
+    try {
+      await deleteSectionFileAction(id, formData);
+      query.set('ok', 'Файл удалён');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось удалить файл';
+      query.set('error', message);
+    }
+
+    redirect(`/sections/${id}?${query.toString()}`);
+  };
   const storageUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
   const handleCreateTable = async (formData: FormData) => {
