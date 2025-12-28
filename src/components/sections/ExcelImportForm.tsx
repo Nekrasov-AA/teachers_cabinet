@@ -76,7 +76,7 @@ export default function ExcelImportForm({ sectionId }: ExcelImportFormProps) {
 
   return (
     <div className="space-y-4">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3 md:flex-row md:items-end">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3 md:flex-row md:items-end" data-testid="excel-import-form">
         <label className="flex-1 text-sm text-slate-600">
           Excel файл (до 10MB)
           <input

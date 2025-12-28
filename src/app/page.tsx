@@ -97,7 +97,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               <div className="rounded-2xl border border-slate-200 bg-white p-6">
                 <h2 className="text-lg font-semibold text-slate-900">Новый раздел</h2>
                 <p className="text-sm text-slate-600">Создайте корневой раздел меню.</p>
-                <form action={createSectionAction} className="mt-4 space-y-3">
+                <form action={createSectionAction} className="mt-4 space-y-3" data-testid="create-section-form">
                   <label className="block text-sm">
                     <span className="text-slate-600">Название</span>
                     <input

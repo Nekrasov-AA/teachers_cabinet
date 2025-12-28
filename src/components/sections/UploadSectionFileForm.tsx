@@ -19,6 +19,7 @@ export default function UploadSectionFileForm({ uploadAction }: UploadSectionFil
     <form
       className="mt-4 flex flex-col gap-4 rounded-xl border border-dashed border-slate-300 p-4"
       encType="multipart/form-data"
+      data-testid="file-upload-form"
     >
       <label
         htmlFor={inputId}
