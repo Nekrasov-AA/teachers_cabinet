@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireRole } from '@/lib/auth/requireRole';
+import { logAuditEvent } from '@/lib/audit/log';
 
 function sanitizeOrderIndex(value: FormDataEntryValue | null): number {
   const parsed = Number(value);
@@ -27,7 +28,7 @@ async function revalidateSections(sectionId?: string | null) {
 }
 
 export async function createSectionAction(formData: FormData) {
-  await requireRole('admin');
+  const { user } = await requireRole('admin');
 
   const title = (formData.get('title') as string | null)?.trim();
   const parentId = (formData.get('parentId') as string | null) || null;
@@ -38,15 +39,26 @@ export async function createSectionAction(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from('sections').insert({
-    title,
-    parent_id: parentId,
-    order_index: orderIndex,
-  });
+  const { data: sectionRecord, error } = await supabase
+    .from('sections')
+    .insert({
+      title,
+      parent_id: parentId,
+      order_index: orderIndex,
+    })
+    .select('id')
+    .single();
 
-  if (error) {
-    throw new Error(error.message);
+  if (error || !sectionRecord) {
+    throw new Error(error?.message ?? 'Не удалось создать раздел');
   }
+
+  await logAuditEvent({
+    action: 'section.create',
+    actorId: user.id,
+    sectionId: sectionRecord.id,
+    metadata: { title, parentId },
+  });
 
   await revalidateSections(parentId);
 }
@@ -85,19 +97,35 @@ export async function uploadSectionFileAction(sectionId: string, formData: FormD
     throw new Error(uploadError.message);
   }
 
-  const { error: insertError } = await supabase.from('section_files').insert({
-    section_id: sectionId,
-    path,
-    original_name: file.name,
-    mime_type: file.type,
-    size: file.size,
-    uploaded_by: user.id,
-  });
+  const { data: fileRecord, error: insertError } = await supabase
+    .from('section_files')
+    .insert({
+      section_id: sectionId,
+      path,
+      original_name: file.name,
+      mime_type: file.type,
+      size: file.size,
+      uploaded_by: user.id,
+    })
+    .select('id')
+    .single();
 
-  if (insertError) {
+  if (insertError || !fileRecord) {
     await adminClient.storage.from('files').remove([path]);
-    throw new Error(insertError.message);
+    throw new Error(insertError?.message ?? 'Не удалось сохранить файл');
   }
+
+  await logAuditEvent({
+    action: 'file.upload',
+    actorId: user.id,
+    sectionId,
+    targetId: fileRecord.id,
+    metadata: {
+      fileName: file.name,
+      mimeType: file.type,
+      size: file.size,
+    },
+  });
 
   await revalidateSections(sectionId);
 }
@@ -188,7 +216,7 @@ export async function addRowAction(tableId: string, row: Record<string, unknown>
 }
 
 export async function deleteRowAction(sectionId: string, tableId: string, rowId: string) {
-  await requireRole('admin');
+  const { user } = await requireRole('admin');
   const supabase = await createClient();
 
   const normalizedRowId = rowId?.trim();
@@ -230,12 +258,20 @@ export async function deleteRowAction(sectionId: string, tableId: string, rowId:
     throw new Error(deleteError.message);
   }
 
+  await logAuditEvent({
+    action: 'table.row.delete',
+    actorId: user.id,
+    sectionId,
+    tableId,
+    targetId: normalizedRowId,
+  });
+
   await revalidateSections(sectionId);
   revalidatePath(`/sections/${sectionId}/tables/${tableId}`);
 }
 
 export async function deleteSectionAction(sectionId: string) {
-  await requireRole('admin');
+  const { user } = await requireRole('admin');
   const supabase = await createClient();
   const adminClient = createAdminClient();
 
@@ -311,11 +347,17 @@ export async function deleteSectionAction(sectionId: string) {
     throw new Error(deleteSectionError.message);
   }
 
+  await logAuditEvent({
+    action: 'section.delete',
+    actorId: user.id,
+    sectionId,
+  });
+
   await revalidateSections(section.parent_id);
 }
 
 export async function deleteTableAction(sectionId: string, tableId: string) {
-  await requireRole('admin');
+  const { user } = await requireRole('admin');
   const supabase = await createClient();
 
   const { data: tableRecord, error: tableError } = await supabase
@@ -341,6 +383,13 @@ export async function deleteTableAction(sectionId: string, tableId: string) {
   if (deleteError) {
     throw new Error(deleteError.message);
   }
+
+  await logAuditEvent({
+    action: 'table.delete',
+    actorId: user.id,
+    sectionId,
+    tableId,
+  });
 
   await revalidateSections(sectionId);
   revalidatePath(`/sections/${sectionId}/tables/${tableId}`);

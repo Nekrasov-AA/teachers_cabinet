@@ -18,12 +18,16 @@ export type ParsedExcelData = {
 
 export type ParseExcelOptions = {
   maxRows?: number;
+  maxColumns?: number;
 };
 
 export class ExcelParseError extends Error {
-  constructor(message: string) {
+  public readonly isUserError: boolean;
+
+  constructor(message: string, isUserError = true) {
     super(message);
     this.name = 'ExcelParseError';
+    this.isUserError = isUserError;
   }
 }
 
@@ -136,8 +140,9 @@ export function parseExcelBuffer(
 
   try {
     workbook = read(payload, { type: 'buffer', cellDates: true });
-  } catch {
-    throw new ExcelParseError('Не удалось прочитать файл');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'неизвестная ошибка';
+    throw new ExcelParseError(`Не удалось прочитать файл: ${message}`);
   }
 
   const sheetName = workbook.SheetNames[0];
@@ -170,24 +175,29 @@ export function parseExcelBuffer(
   const meaningfulRows = dataRows.filter((row) => row.some((value) => !isBlankValue(value)));
   const totalRows = meaningfulRows.length;
   const maxRows = options.maxRows ?? Infinity;
+  const maxColumns = options.maxColumns ?? 100;
 
   if (totalRows === 0) {
     throw new ExcelParseError('Нет данных для импорта');
   }
 
   if (totalRows > maxRows) {
-    throw new ExcelParseError(`Превышен лимит строк (${maxRows})`);
+    throw new ExcelParseError(`Превышен лимит строк: ${totalRows} > ${maxRows}`);
   }
 
-  const maxColumns = Math.max(
+  const columnCount = Math.max(
     headerRow.length,
     meaningfulRows.reduce((acc, row) => Math.max(acc, row.length), 0)
   );
 
+  if (columnCount > maxColumns) {
+    throw new ExcelParseError(`Превышен лимит колонок: ${columnCount} > ${maxColumns}`);
+  }
+
   const usedKeys = new Set<string>();
   const columns: ParsedColumn[] = [];
 
-  for (let index = 0; index < maxColumns; index += 1) {
+  for (let index = 0; index < columnCount; index += 1) {
     const cell = headerRow[index];
     const rawLabel = cell === null || cell === undefined ? '' : String(cell).trim();
     const label = rawLabel || `Колонка ${index + 1}`;
@@ -208,11 +218,19 @@ export function parseExcelBuffer(
     columns.push({ label, key, type });
   }
 
-  const normalizedRows = meaningfulRows.map((row) => {
+  // Валидация: убедиться что все значения нормализуются корректно
+  const normalizedRows = meaningfulRows.map((row, rowIndex) => {
     const shaped: Record<string, unknown> = {};
-    columns.forEach((column, index) => {
-      shaped[column.key] = normalizeCellValue(row[index]);
-    });
+    try {
+      columns.forEach((column, colIndex) => {
+        shaped[column.key] = normalizeCellValue(row[colIndex]);
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'неизвестная ошибка';
+      throw new ExcelParseError(
+        `Ошибка при нормализации значения в строке ${rowIndex + 2}: ${msg}`
+      );
+    }
     return shaped;
   });
 

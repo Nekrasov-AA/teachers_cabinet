@@ -3,6 +3,8 @@ import { revalidatePath } from 'next/cache';
 import { AuthError, requireRole } from '@/lib/auth/requireRole';
 import { createClient } from '@/lib/supabase/server';
 import { ExcelParseError, parseExcelBuffer } from '@/lib/excel/parse';
+import { validateColumns, validateRows } from '@/lib/excel/validate';
+import { logAuditEvent } from '@/lib/audit/log';
 
 export const runtime = 'nodejs';
 
@@ -91,6 +93,19 @@ export async function POST(request: Request, { params }: { params: ParamsPromise
       return jsonError(400, 'excel', 'Нет строк для импорта');
     }
 
+    // Валидация структуры колонок
+    const columnsValidation = validateColumns(parsed.columns);
+    if (columnsValidation) {
+      return jsonError(400, 'schema', columnsValidation);
+    }
+
+    // Валидация первых строк данных
+    const rowsValidation = validateRows(parsed.rows, parsed.columns, 5);
+    if (!rowsValidation.valid) {
+      const errorMessage = rowsValidation.errors.join('; ');
+      return jsonError(400, 'rows', `Ошибки в данных: ${errorMessage}`);
+    }
+
     const tableTitle = buildTableTitle(file.name);
 
     const { data: tableRecord, error: tableError } = await supabase
@@ -131,6 +146,18 @@ export async function POST(request: Request, { params }: { params: ParamsPromise
     revalidatePath('/sections');
     revalidatePath(`/sections/${sectionId}`);
     revalidatePath(`/sections/${sectionId}/tables/${tableRecord.id}`);
+
+    await logAuditEvent({
+      action: 'table.import_excel',
+      actorId: user.id,
+      sectionId,
+      tableId: tableRecord.id,
+      metadata: {
+        fileName: file.name,
+        rows: parsed.rows.length,
+        columns: parsed.columns.length,
+      },
+    });
 
     return NextResponse.json({
       ok: true,

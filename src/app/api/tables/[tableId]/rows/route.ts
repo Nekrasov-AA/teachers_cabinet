@@ -59,11 +59,33 @@ export async function POST(request: Request, { params }: { params: ParamsPromise
   try {
     const { user } = await requireRole('admin');
     const { tableId } = await params;
-    const body = await request.json().catch(() => null);
-    const row = body?.row;
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        { ok: false, message: 'Некорректный JSON' },
+        { status: 400 }
+      );
+    }
+
+    const row = (body as Record<string, unknown>)?.row;
 
     if (!isPlainObject(row)) {
-      return NextResponse.json({ ok: false, message: 'row must be an object' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'Поле "row" должно быть объектом' },
+        { status: 400 }
+      );
+    }
+
+    // Валидация размера объекта
+    const rowString = JSON.stringify(row);
+    if (rowString.length > 100000) {
+      return NextResponse.json(
+        { ok: false, message: 'Данные строки слишком большие (макс 100KB)' },
+        { status: 400 }
+      );
     }
 
     const supabase = await createClient();
@@ -74,7 +96,10 @@ export async function POST(request: Request, { params }: { params: ParamsPromise
       .single();
 
     if (tableError || !table) {
-      return NextResponse.json({ ok: false, message: 'Table not found' }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, message: 'Таблица не найдена' },
+        { status: 404 }
+      );
     }
 
     const { data, error } = await supabase
@@ -93,8 +118,9 @@ export async function POST(request: Request, { params }: { params: ParamsPromise
 
     return NextResponse.json({ ok: true, row: data });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = error instanceof Error ? error.message : 'Неизвестная ошибка';
     const status = error instanceof AuthError ? error.status : 500;
+    console.error('[POST /api/tables/:tableId/rows]', message, error);
     return NextResponse.json({ ok: false, message }, { status });
   }
 }
