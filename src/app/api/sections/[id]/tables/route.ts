@@ -2,12 +2,10 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, getUserWithRole, requireRole } from '@/lib/auth/requireRole';
 
-type ParamsPromise = Promise<{ id: string }>;
-
-export async function GET(_request: Request, { params }: { params: ParamsPromise }) {
+export async function GET(_request: Request, { params }: { params: { id: string } }) {
   try {
     await getUserWithRole();
-    const { id } = await params;
+    const { id } = params;
     const supabase = await createClient();
     const { data, error } = await supabase
       .from('section_tables')
@@ -27,10 +25,10 @@ export async function GET(_request: Request, { params }: { params: ParamsPromise
   }
 }
 
-export async function POST(request: Request, { params }: { params: ParamsPromise }) {
+export async function POST(request: Request, { params }: { params: { id: string } }) {
   try {
     const { user } = await requireRole('admin');
-    const { id } = await params;
+    const { id } = params;
     const body = await request.json().catch(() => null);
     const title = typeof body?.title === 'string' ? body.title.trim() : '';
 

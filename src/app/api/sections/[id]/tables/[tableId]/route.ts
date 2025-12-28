@@ -2,16 +2,17 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, requireRole } from '@/lib/auth/requireRole';
 
-type ParamsPromise = Promise<{ id: string; tableId: string }>;
-
 function jsonError(status: number, where: string, message: string) {
   return NextResponse.json({ ok: false, where, message }, { status });
 }
 
-export async function DELETE(_request: Request, { params }: { params: ParamsPromise }) {
+export async function DELETE(
+  _request: Request,
+  { params }: { params: { id: string; tableId: string } }
+) {
   try {
     await requireRole('admin');
-    const { id: sectionId, tableId } = await params;
+    const { id: sectionId, tableId } = params;
 
     const supabase = await createClient();
     const { data: tableRecord, error: tableError } = await supabase

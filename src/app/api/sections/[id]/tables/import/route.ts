@@ -10,8 +10,6 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_ROWS = 2000;
 const CHUNK_SIZE = 300;
 
-type ParamsPromise = Promise<{ id: string }>;
-
 function jsonError(status: number, where: string, message: string) {
   return NextResponse.json({ ok: false, where, message }, { status });
 }
@@ -40,10 +38,10 @@ async function cleanupTable(tableId: string, supabase: Awaited<ReturnType<typeof
   await supabase.from('section_tables').delete().eq('id', tableId);
 }
 
-export async function POST(request: Request, { params }: { params: ParamsPromise }) {
+export async function POST(request: Request, { params }: { params: { id: string } }) {
   try {
     const { user } = await requireRole('admin');
-    const { id: sectionId } = await params;
+    const { id: sectionId } = params;
     const supabase = await createClient();
 
     const { data: sectionRecord, error: sectionError } = await supabase
