@@ -3,23 +3,26 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { AuthError, requireRole } from '@/lib/auth/requireRole';
 
-export async function DELETE(_request: Request, { params }: { params: { id: string; fileId: string } }) {
+type ParamsPromise = Promise<{ id: string; fileId: string }>;
+
+export async function DELETE(_request: Request, { params }: { params: ParamsPromise }) {
   try {
     await requireRole('admin');
     const supabase = await createClient();
+    const { id, fileId } = await params;
 
     const { data: fileRecord, error } = await supabase
       .from('section_files')
       .select('id, path')
-      .eq('id', params.fileId)
-      .eq('section_id', params.id)
+      .eq('id', fileId)
+      .eq('section_id', id)
       .single();
 
     if (error || !fileRecord) {
       return NextResponse.json({ ok: false, message: 'File not found' }, { status: 404 });
     }
 
-    const { error: deleteRowError } = await supabase.from('section_files').delete().eq('id', params.fileId);
+    const { error: deleteRowError } = await supabase.from('section_files').delete().eq('id', fileId);
     if (deleteRowError) {
       throw new Error(deleteRowError.message);
     }

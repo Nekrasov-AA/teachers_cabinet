@@ -2,14 +2,17 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, requireRole } from '@/lib/auth/requireRole';
 
+type ParamsPromise = Promise<{ id: string }>;
+
 function parseOrderIndex(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, { params }: { params: ParamsPromise }) {
   try {
     await requireRole('admin');
+    const { id } = await params;
     const body = await request.json().catch(() => null);
     const updates: Record<string, unknown> = {};
 
@@ -37,7 +40,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     const { data, error } = await supabase
       .from('sections')
       .update(updates)
-      .eq('id', params.id)
+      .eq('id', id)
       .select()
       .single();
 
@@ -53,11 +56,12 @@ export async function PATCH(request: Request, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(_request: Request, { params }: { params: ParamsPromise }) {
   try {
     await requireRole('admin');
     const supabase = await createClient();
-    const { error } = await supabase.from('sections').delete().eq('id', params.id);
+    const { id } = await params;
+    const { error } = await supabase.from('sections').delete().eq('id', id);
 
     if (error) {
       throw new Error(error.message);

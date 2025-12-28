@@ -3,18 +3,21 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { AuthError, getUserWithRole, requireRole } from '@/lib/auth/requireRole';
 
+type ParamsPromise = Promise<{ id: string }>;
+
 function sanitizeName(name: string) {
   return name.replace(/[^\w.\-]+/g, '_');
 }
 
-export async function GET(_request: Request, { params }: { params: { id: string } }) {
+export async function GET(_request: Request, { params }: { params: ParamsPromise }) {
   try {
     await getUserWithRole();
+    const { id } = await params;
     const supabase = await createClient();
     const { data, error } = await supabase
       .from('section_files')
       .select('id, section_id, path, original_name, mime_type, size, created_at, uploaded_by')
-      .eq('section_id', params.id)
+      .eq('section_id', id)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -29,9 +32,10 @@ export async function GET(_request: Request, { params }: { params: { id: string 
   }
 }
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, { params }: { params: ParamsPromise }) {
   try {
     const { user } = await requireRole('admin');
+    const { id } = await params;
     const supabase = await createClient();
     const form = await request.formData();
     const file = form.get('file');
@@ -43,7 +47,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const { data: section, error: sectionError } = await supabase
       .from('sections')
       .select('id')
-      .eq('id', params.id)
+      .eq('id', id)
       .single();
 
     if (sectionError || !section) {
@@ -52,7 +56,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
 
     const adminClient = createAdminClient();
     const safeName = sanitizeName(file.name || 'file');
-    const path = `sections/${params.id}/${Date.now()}_${safeName}`;
+    const path = `sections/${id}/${Date.now()}_${safeName}`;
 
     const { error: uploadError } = await adminClient.storage
       .from('files')
@@ -68,7 +72,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const { data, error } = await supabase
       .from('section_files')
       .insert({
-        section_id: params.id,
+        section_id: id,
         path,
         original_name: file.name,
         mime_type: file.type,

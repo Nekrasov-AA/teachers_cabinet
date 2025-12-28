@@ -2,17 +2,16 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, requireRole } from '@/lib/auth/requireRole';
 
+type ParamsPromise = Promise<{ tableId: string; rowId: string }>;
+
 function jsonError(status: number, where: string, message: string) {
   return NextResponse.json({ ok: false, where, message }, { status });
 }
 
-export async function DELETE(
-  _request: Request,
-  { params }: { params: { tableId: string; rowId: string } }
-) {
+export async function DELETE(_request: Request, { params }: { params: ParamsPromise }) {
   try {
     await requireRole('admin');
-    const { tableId, rowId } = params;
+    const { tableId, rowId } = await params;
 
     if (!tableId || !rowId) {
       return jsonError(400, 'params', 'tableId и rowId обязательны');

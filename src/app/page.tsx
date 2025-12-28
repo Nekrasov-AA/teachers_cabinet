@@ -1,4 +1,4 @@
-import React, { JSX } from 'react';
+import type { JSX } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';

@@ -5,14 +5,16 @@ import { ExcelParseError, parseExcelBuffer } from '@/lib/excel/parse';
 
 export const runtime = 'nodejs';
 
+type ParamsPromise = Promise<{ id: string }>;
+
 function jsonError(status: number, where: string, message: string) {
   return NextResponse.json({ ok: false, where, message }, { status });
 }
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, { params }: { params: ParamsPromise }) {
   try {
     await requireRole('admin');
-    const { id: sectionId } = params;
+    const { id: sectionId } = await params;
 
     const supabase = await createClient();
     const { data: sectionRecord, error: sectionError } = await supabase
