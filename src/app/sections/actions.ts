@@ -14,6 +14,10 @@ function safeFileName(name: string) {
   return name.replace(/[^\w.\-]+/g, '_');
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 async function revalidateSections(sectionId?: string | null) {
   revalidatePath('/', 'page');
   revalidatePath('/sections');
@@ -127,4 +131,221 @@ export async function deleteSectionFileAction(sectionId: string, formData: FormD
   await adminClient.storage.from('files').remove([fileRecord.path]);
 
   await revalidateSections(sectionId);
+}
+
+export async function createTableAction(sectionId: string, title: string) {
+  const { user } = await requireRole('admin');
+  const normalizedTitle = title?.trim();
+
+  if (!normalizedTitle) {
+    throw new Error('Название таблицы обязательно');
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from('section_tables').insert({
+    section_id: sectionId,
+    title: normalizedTitle,
+    schema: [],
+    created_by: user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await revalidateSections(sectionId);
+}
+
+export async function addRowAction(tableId: string, row: Record<string, unknown>) {
+  const { user } = await requireRole('admin');
+
+  if (!isPlainObject(row)) {
+    throw new Error('Строка должна быть объектом');
+  }
+
+  const supabase = await createClient();
+  const { data: table, error: tableError } = await supabase
+    .from('section_tables')
+    .select('section_id')
+    .eq('id', tableId)
+    .single();
+
+  if (tableError || !table) {
+    throw new Error('Таблица не найдена');
+  }
+
+  const { error } = await supabase.from('section_table_rows').insert({
+    table_id: tableId,
+    row,
+    created_by: user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await revalidateSections(table.section_id);
+}
+
+export async function deleteRowAction(sectionId: string, tableId: string, rowId: string) {
+  await requireRole('admin');
+  const supabase = await createClient();
+
+  const normalizedRowId = rowId?.trim();
+  if (!normalizedRowId) {
+    throw new Error('Неизвестная строка');
+  }
+
+  const { data: table, error: tableError } = await supabase
+    .from('section_tables')
+    .select('section_id')
+    .eq('id', tableId)
+    .single();
+
+  if (tableError || !table) {
+    throw new Error('Таблица не найдена');
+  }
+
+  if (table.section_id !== sectionId) {
+    throw new Error('Таблица принадлежит другому разделу');
+  }
+
+  const { data: rowRecord, error: rowError } = await supabase
+    .from('section_table_rows')
+    .select('id')
+    .eq('id', normalizedRowId)
+    .eq('table_id', tableId)
+    .single();
+
+  if (rowError || !rowRecord) {
+    throw new Error('Строка не найдена');
+  }
+
+  const { error: deleteError } = await supabase
+    .from('section_table_rows')
+    .delete()
+    .eq('id', normalizedRowId);
+
+  if (deleteError) {
+    throw new Error(deleteError.message);
+  }
+
+  await revalidateSections(sectionId);
+  revalidatePath(`/sections/${sectionId}/tables/${tableId}`);
+}
+
+export async function deleteTableAction(sectionId: string, tableId: string) {
+  await requireRole('admin');
+  const supabase = await createClient();
+
+  const { data: tableRecord, error: tableError } = await supabase
+    .from('section_tables')
+    .select('section_id')
+    .eq('id', tableId)
+    .single();
+
+  if (tableError || !tableRecord) {
+    throw new Error('Таблица не найдена');
+  }
+
+  if (tableRecord.section_id !== sectionId) {
+    throw new Error('Таблица принадлежит другому разделу');
+  }
+
+  const { error: deleteError } = await supabase
+    .from('section_tables')
+    .delete()
+    .eq('id', tableId)
+    .eq('section_id', sectionId);
+
+  if (deleteError) {
+    throw new Error(deleteError.message);
+  }
+
+  await revalidateSections(sectionId);
+  revalidatePath(`/sections/${sectionId}/tables/${tableId}`);
+}
+
+type TableSchemaColumn = {
+  key: string;
+  label: string;
+  type: 'string' | 'number' | 'boolean' | 'date';
+};
+
+const allowedColumnTypes = new Set<TableSchemaColumn['type']>(['string', 'number', 'boolean', 'date']);
+
+export async function updateTableSchemaAction(
+  sectionId: string,
+  tableId: string,
+  schemaJson: string
+) {
+  await requireRole('admin');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(schemaJson);
+  } catch {
+    throw new Error('Некорректный JSON схемы');
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('Добавьте хотя бы одну колонку');
+  }
+
+  const normalized: TableSchemaColumn[] = [];
+  const seenKeys = new Set<string>();
+
+  parsed.forEach((field) => {
+    if (!isPlainObject(field)) {
+      throw new Error('Каждая колонка должна быть объектом');
+    }
+
+    const key = typeof field.key === 'string' ? field.key.trim() : '';
+    const label = typeof field.label === 'string' ? field.label.trim() : '';
+    const rawType = typeof field.type === 'string' ? (field.type.trim() as TableSchemaColumn['type']) : 'string';
+    const type = allowedColumnTypes.has(rawType) ? rawType : 'string';
+
+    if (!key) {
+      throw new Error('Укажите ключ колонки');
+    }
+
+    if (seenKeys.has(key)) {
+      throw new Error(`Ключ "${key}" повторяется`);
+    }
+
+    normalized.push({
+      key,
+      label: label || key,
+      type,
+    });
+    seenKeys.add(key);
+  });
+
+  const supabase = await createClient();
+  const { data: tableRecord, error: tableError } = await supabase
+    .from('section_tables')
+    .select('section_id')
+    .eq('id', tableId)
+    .single();
+
+  if (tableError || !tableRecord) {
+    throw new Error('Таблица не найдена');
+  }
+
+  if (tableRecord.section_id !== sectionId) {
+    throw new Error('Таблица принадлежит другому разделу');
+  }
+
+  const { error: updateError } = await supabase
+    .from('section_tables')
+    .update({ schema: normalized })
+    .eq('id', tableId)
+    .eq('section_id', sectionId);
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  await revalidateSections(sectionId);
+  revalidatePath(`/sections/${sectionId}/tables/${tableId}`);
 }
