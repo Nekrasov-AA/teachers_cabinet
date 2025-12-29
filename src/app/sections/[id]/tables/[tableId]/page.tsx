@@ -2,26 +2,15 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getUserWithRole } from '@/lib/auth/requireRole';
-import {
-  addRowAction,
-  deleteRowAction,
-  deleteTableAction,
-  updateTableSchemaAction,
-} from '@/app/sections/actions';
+import { deleteRowAction, deleteTableAction, updateTableSchemaAction } from '@/app/sections/actions';
+import { addRowFromSchemaAction } from './actions';
 import DeleteTableButton from '@/components/sections/DeleteTableButton';
 import SchemaEditor from '@/components/sections/SchemaEditor';
+import type { SchemaField, ColumnType } from '@/lib/tables/schemaForm';
 
 type PageProps = {
   params: Promise<{ id: string; tableId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-};
-
-type ColumnType = 'string' | 'number' | 'boolean' | 'date';
-
-type SchemaField = {
-  key: string;
-  label: string;
-  type: ColumnType;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -46,6 +35,12 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
 
   const limit = clampLimit(Number(rawSearch?.limit ?? 50));
   const offset = normalizeOffset(Number(rawSearch?.offset ?? 0));
+  
+  // Search/Sort параметры
+  const searchQuery = typeof rawSearch?.q === 'string' ? rawSearch.q.trim() : '';
+  const searchCol = typeof rawSearch?.col === 'string' ? rawSearch.col.trim() : '';
+  const sortKey = typeof rawSearch?.sort === 'string' ? rawSearch.sort.trim() : '';
+  const sortDir = rawSearch?.dir === 'desc' ? 'desc' : 'asc';
 
   const okMessage = typeof rawSearch?.ok === 'string' ? rawSearch.ok : null;
   const errorMessage = typeof rawSearch?.error === 'string' ? rawSearch.error : null;
@@ -60,13 +55,28 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
     notFound();
   }
 
+  // Загрузка строк с поиском/сортировкой
   const rangeEnd = offset + limit;
-  const { data: rawRows, error: rowsError } = await supabase
+  let query = supabase
     .from('section_table_rows')
     .select('id, created_at, row')
-    .eq('table_id', tableId)
-    .order('created_at', { ascending: false })
-    .range(offset, rangeEnd);
+    .eq('table_id', tableId);
+
+  // Поиск по колонке (MVP: ilike по тексту)
+  if (searchQuery && searchCol && searchCol !== 'any') {
+    query = query.ilike(`row->${searchCol}`, `%${searchQuery}%`);
+  }
+
+  // Сортировка (MVP: текстовая по любой колонке)
+  if (sortKey) {
+    query = query.order(`row->${sortKey}`, { ascending: sortDir === 'asc' });
+  } else {
+    query = query.order('created_at', { ascending: false });
+  }
+
+  query = query.range(offset, rangeEnd);
+
+  const { data: rawRows, error: rowsError } = await query;
 
   if (rowsError) {
     throw new Error(rowsError.message);
@@ -127,10 +137,14 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
     return String(value);
   };
 
-  const buildPageUrl = (nextOffsetValue: number) => {
+  const buildPageUrl = (params: Record<string, string | number>) => {
     const query = new URLSearchParams();
-    query.set('limit', String(limit));
-    query.set('offset', String(nextOffsetValue));
+    query.set('limit', String(params.limit ?? limit));
+    query.set('offset', String(params.offset ?? offset));
+    if (params.q) query.set('q', String(params.q));
+    if (params.col) query.set('col', String(params.col));
+    if (params.sort) query.set('sort', String(params.sort));
+    if (params.dir) query.set('dir', String(params.dir));
     return `/sections/${id}/tables/${tableId}?${query.toString()}`;
   };
 
@@ -160,93 +174,18 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
 
   const formSchema = inferredSchema;
 
-  const handleAddRowFromSchema = async (formData: FormData) => {
+  const handleAddRow = async (formData: FormData) => {
     'use server';
 
     const query = new URLSearchParams();
     query.set('limit', String(limit));
-    query.set('offset', String(offset));
-
-    if (formSchema.length === 0) {
-      query.set('error', 'Настройте схему перед добавлением строк');
-      redirect(`/sections/${id}/tables/${tableId}?${query.toString()}`);
-    }
-
-    const row: Record<string, unknown> = {};
-
-    formSchema.forEach((field) => {
-      const rawValue = formData.get(field.key);
-
-      switch (field.type) {
-        case 'boolean':
-          row[field.key] = rawValue === 'on';
-          break;
-        case 'number': {
-          if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
-            const parsed = Number(rawValue);
-            row[field.key] = Number.isFinite(parsed) ? parsed : rawValue;
-          } else {
-            row[field.key] = null;
-          }
-          break;
-        }
-        case 'date': {
-          if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
-            const parsed = new Date(rawValue);
-            row[field.key] = Number.isNaN(parsed.getTime()) ? rawValue : parsed.toISOString();
-          } else {
-            row[field.key] = null;
-          }
-          break;
-        }
-        default: {
-          if (typeof rawValue === 'string') {
-            const trimmed = rawValue.trim();
-            row[field.key] = trimmed.length > 0 ? trimmed : null;
-          } else {
-            row[field.key] = rawValue ?? null;
-          }
-        }
-      }
-    });
+    query.set('offset', '0');
 
     try {
-      await addRowAction(tableId, row);
-      query.set('offset', '0');
+      await addRowFromSchemaAction(id, tableId, inferredSchema, formData);
       query.set('ok', 'Строка добавлена');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось сохранить строку';
-      query.set('error', message);
-    }
-
-    redirect(`/sections/${id}/tables/${tableId}?${query.toString()}`);
-  };
-
-  const handleAddRowJson = async (formData: FormData) => {
-    'use server';
-
-    const query = new URLSearchParams();
-    query.set('limit', String(limit));
-
-    const jsonPayload = (formData.get('row_json') as string | null) ?? '';
-    if (!jsonPayload.trim()) {
-      query.set('offset', String(offset));
-      query.set('error', 'Вставьте JSON объекта');
-      redirect(`/sections/${id}/tables/${tableId}?${query.toString()}`);
-    }
-
-    try {
-      const parsed = JSON.parse(jsonPayload);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        throw new Error('JSON должен описывать объект');
-      }
-
-      await addRowAction(tableId, parsed as Record<string, unknown>);
-      query.set('offset', '0');
-      query.set('ok', 'Строка добавлена');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось сохранить строку';
-      query.set('offset', String(offset));
       query.set('error', message);
     }
 
@@ -346,6 +285,85 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
           </section>
         ) : null}
 
+        {/* Поиск и сортировка */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-semibold text-slate-900">Поиск и сортировка</h2>
+          <form method="get" className="mt-4 grid gap-4 md:grid-cols-2">
+            <input type="hidden" name="limit" value={limit} />
+            <input type="hidden" name="offset" value="0" />
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Поиск</label>
+              <input
+                type="text"
+                name="q"
+                defaultValue={searchQuery}
+                placeholder="Введите текст..."
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">По колонке</label>
+              <select
+                name="col"
+                defaultValue={searchCol}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="">Все</option>
+                {inferredSchema.map((field) => (
+                  <option key={field.key} value={field.key}>
+                    {field.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Сортировка</label>
+              <select
+                name="sort"
+                defaultValue={sortKey}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="">По дате создания</option>
+                {inferredSchema.map((field) => (
+                  <option key={field.key} value={field.key}>
+                    {field.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Порядок</label>
+              <select
+                name="dir"
+                defaultValue={sortDir}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="asc">По возрастанию</option>
+                <option value="desc">По убыванию</option>
+              </select>
+            </div>
+
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                Применить
+              </button>
+              <Link
+                href={`/sections/${id}/tables/${tableId}`}
+                className="ml-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Сбросить
+              </Link>
+            </div>
+          </form>
+        </section>
+
         <section className="rounded-2xl border border-slate-200 bg-white p-6">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
@@ -354,7 +372,7 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
             </div>
             <div className="flex gap-3">
               <Link
-                href={buildPageUrl(prevOffset)}
+                href={buildPageUrl({ offset: prevOffset })}
                 aria-disabled={offset === 0}
                 className={`rounded-lg border px-4 py-2 text-sm font-medium ${
                   offset === 0
@@ -365,7 +383,7 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
                 Prev
               </Link>
               <Link
-                href={hasNext ? buildPageUrl(nextOffset) : buildPageUrl(offset)}
+                href={hasNext ? buildPageUrl({ offset: nextOffset }) : buildPageUrl({ offset })}
                 aria-disabled={!hasNext}
                 className={`rounded-lg border px-4 py-2 text-sm font-medium ${
                   hasNext
@@ -411,15 +429,23 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
                       })}
                       {isAdmin ? (
                         <td className="border-b border-slate-50 px-3 py-2 text-right">
-                          <form action={handleDeleteRowInline}>
-                            <input type="hidden" name="rowId" value={rowEntry.id} />
-                            <button
-                              type="submit"
-                              className="text-xs font-medium text-rose-600 hover:text-rose-500"
+                          <div className="flex justify-end gap-2">
+                            <Link
+                              href={`/sections/${id}/tables/${tableId}/rows/${rowEntry.id}/edit`}
+                              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
                             >
-                              Удалить
-                            </button>
-                          </form>
+                              Редактировать
+                            </Link>
+                            <form action={handleDeleteRowInline}>
+                              <input type="hidden" name="rowId" value={rowEntry.id} />
+                              <button
+                                type="submit"
+                                className="text-xs font-medium text-rose-600 hover:text-rose-500"
+                              >
+                                Удалить
+                              </button>
+                            </form>
+                          </div>
                         </td>
                       ) : null}
                     </tr>
@@ -456,7 +482,7 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
                 Поля строятся по текущей схеме таблицы. Пустые значения сохраняются как null.
               </p>
               {formSchema.length > 0 ? (
-                <form action={handleAddRowFromSchema} className="mt-4 space-y-4">
+                <form action={handleAddRow} className="mt-4 space-y-4">
                   {formSchema.map((field) => (
                     <label key={field.key} className="block text-sm text-slate-600">
                       {field.label}
@@ -498,27 +524,6 @@ export default async function SectionTablePage({ params, searchParams }: PagePro
               ) : (
                 <p className="mt-4 text-sm text-slate-500">Настройте схему, чтобы добавлять строки через форму.</p>
               )}
-
-              <details className="mt-6 rounded-xl border border-slate-100 bg-slate-50 p-4">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-900">Advanced: вставить JSON</summary>
-                <p className="mt-2 text-xs text-slate-500">Можно добавить строку вручную, вставив JSON объекта.</p>
-                <form action={handleAddRowJson} className="mt-3 flex flex-col gap-3">
-                  <textarea
-                    name="row_json"
-                    rows={6}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
-                    placeholder='{"field":"value"}'
-                  />
-                  <div>
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-                    >
-                      Сохранить JSON
-                    </button>
-                  </div>
-                </form>
-              </details>
             </section>
 
             <section className="rounded-2xl border border-rose-200 bg-white p-6">

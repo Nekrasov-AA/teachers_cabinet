@@ -6,6 +6,8 @@ export type AuditAction =
   | 'file.upload'
   | 'table.import_excel'
   | 'table.delete'
+  | 'table.row.add'
+  | 'table.row.update'
   | 'table.row.delete';
 
 export type AuditLogEntry = {
