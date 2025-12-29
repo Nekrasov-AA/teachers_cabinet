@@ -63,7 +63,7 @@ export async function POST(request: Request, { params }: { params: ParamsPromise
     let body: unknown;
     try {
       body = await request.json();
-    } catch (parseError) {
+    } catch {
       return NextResponse.json(
         { ok: false, message: 'Некорректный JSON' },
         { status: 400 }
